@@ -13,6 +13,8 @@ This project focuses on predicting apartment prices in Buenos Aires, Argentina, 
 * Matplotlib : for visualaization
 
 * Mean-Absolute-Error : for evaluation
+
+* Glob : for joining multiple datasets
   
 ---
 
