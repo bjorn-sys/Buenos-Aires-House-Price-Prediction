@@ -2,7 +2,18 @@
 
 This project focuses on predicting apartment prices in Buenos Aires, Argentina, using a Linear Regression model. The primary goal is to develop a data-driven approach for estimating apartment prices based on several key features.
 
+---
 
+# Libraries
+
+* pandas : for data manipulation
+
+* Sklearn : for model development
+
+* Matplotlib : for visualaization
+
+* Mean-Absolute-Error : for evaluation
+  
 ---
 
 # 📊 Project Overview
