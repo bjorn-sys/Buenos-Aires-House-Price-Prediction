@@ -1,37 +1,106 @@
-# Buenos-Aires-House-Price-Prediction
+Buenos Aires House Price Prediction
 
-predicting the house prices of apartments in buenos aires argentina
+This project focuses on predicting apartment prices in Buenos Aires, Argentina, using a Linear Regression model. The primary goal is to develop a data-driven approach for estimating apartment prices based on several key features.
 
-this project is about predicting the price of apartments in buenos aires argentina using linear regression model
 
-i needed to clean the data and filter the data needed for this project using a wrangle function...seperating columns, creating new features from the existing one.
+---
 
-i used glob library to join all the csv files containing the real estate files needed for the data and then concatenated all of them into one dataframe
+📊 Project Overview
 
-firstly i filtered the property type to only "APARTMENTS"
+Location: Buenos Aires, Argentina
 
-secondly i filtered the city to "CAPITAL FEDERAL"
+Property Type: Apartments only
 
-the i filtered the price to less than "400,000.00" 
+Objective: Predict apartment prices using machine learning (Linear Regression)
 
-the surface area i worked with was from 31sq m2 to 101sq m2 afer removing the top and bottom 10%
 
-i removed columns with high and low cardinality due to high or very low unique values in the features
 
-i also removed columns with data leakage...columns that can give information to the target column before it might have predicted what is needed
+---
 
-dropped columns with more than 50% nan values
+🧹 Data Wrangling & Preprocessing
 
-used simple imputer to fill the features needed for model development
+✅ Data Collection
 
-after visualization i found out that there is a positive relationship between the surface area covered and the price of the apartment...the more area the more the price
+Used the glob library to read and combine multiple .csv files containing real estate listings.
 
-also found the average price of the apartments to be within the region of 132k
+Concatenated all datasets into a single DataFrame for analysis.
 
-visualizes the neighborhoods with the highest number of apartments is 'pelermo' neighborhood and avearge price in each neighborhood apartment are sold for and the highest is 'puerto madero'
 
-mean absolute error baseline is  '44860.1' while mean absolute error training " 4330.4" which is lower than the baseline and shows good model performance.
+✅ Data Filtering
 
-created a function for inputing data for the model to predict and came out with result.
+Property Type: Filtered for APARTMENTS only.
 
-thanks
+Location: Limited to the Capital Federal region.
+
+Price: Filtered apartments priced under $400,000.
+
+Surface Area: Retained apartments with a surface area between 31 m² and 101 m², removing the top and bottom 10% of the range to eliminate outliers.
+
+
+✅ Data Cleaning
+
+Dropped columns:
+
+With high or low cardinality (features with too many or too few unique values).
+
+That led to data leakage (columns that revealed target information).
+
+With more than 50% missing values.
+
+
+Used Simple Imputer to fill in missing values necessary for model training.
+
+
+
+---
+
+📈 Exploratory Data Analysis
+
+Found a positive correlation between surface area and apartment price — larger apartments tend to cost more.
+
+The average apartment price was approximately $132,000.
+
+Identified:
+
+Palermo as the neighborhood with the highest number of listings.
+
+Puerto Madero as the most expensive neighborhood on average.
+
+
+
+
+---
+
+🤖 Model Development
+
+Used a Linear Regression model for price prediction.
+
+Baseline Mean Absolute Error (MAE): 44,860.1
+
+Model MAE (on training data): 4,330.4
+
+The significantly lower MAE compared to the baseline indicates strong model performance.
+
+
+
+
+---
+
+🛠️ Model Deployment
+
+Built a custom prediction function to input new apartment data and return price predictions.
+
+
+
+---
+
+✅ Conclusion
+
+This project successfully demonstrates how data preprocessing, feature engineering, and machine learning can be combined to build a reliable price prediction model for real estate in Buenos Aires. The model provides insights into key factors influencing apartment prices and offers a foundation for further development or deployment.
+
+
+---
+
+🙏 Acknowledgments
+
+Thank you for reviewing this project!
