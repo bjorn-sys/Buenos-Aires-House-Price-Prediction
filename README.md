@@ -102,6 +102,8 @@ This project focuses on predicting apartment prices in Buenos Aires, Argentina, 
 
 * Built a custom prediction function to input new apartment data and return price predictions.
 
+* Model was deployed using streamlit and file is **house_pred.py** was added for checking
+
 
 
 ---
