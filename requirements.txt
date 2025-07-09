@@ -2,9 +2,7 @@ streamlit
 pandas
 scikit-learn
 matplotlib
-xgboost
 seaborn
-numpy
 plotly
-glob
+glob2
 missingno
