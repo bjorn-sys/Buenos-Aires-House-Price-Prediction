@@ -84,6 +84,7 @@ def generate_sample_data():
         'property_type': ['apartment'] * n_samples,
         'price_aprox_usd': np.random.normal(150000, 50000, n_samples).clip(50000, 400000),
         'surface_covered_in_m2': np.random.normal(60, 20, n_samples).clip(30, 120),
+        'rooms': np.random.choice(range(1, 6), n_samples, p=[0.1, 0.3, 0.4, 0.15, 0.05]),  # 1-5 rooms
         'lat': np.random.normal(-34.60, 0.05, n_samples),
         'lon': np.random.normal(-58.45, 0.05, n_samples),
         'neighborhood': np.random.choice(neighborhoods, n_samples)
@@ -105,6 +106,12 @@ def generate_sample_data():
     
     # Adjust prices based on surface area
     df['price_aprox_usd'] = df['price_aprox_usd'] * (df['surface_covered_in_m2'] / 60)
+    
+    # Adjust prices based on number of rooms
+    room_multipliers = {1: 0.7, 2: 0.9, 3: 1.0, 4: 1.2, 5: 1.4}
+    for rooms, multiplier in room_multipliers.items():
+        mask = df['rooms'] == rooms
+        df.loc[mask, 'price_aprox_usd'] = df.loc[mask, 'price_aprox_usd'] * multiplier
     
     return df
 
@@ -128,6 +135,10 @@ def wrangle(filepath):
         low, high = df["surface_covered_in_m2"].quantile([0.1, 0.9])
         mask_area = df["surface_covered_in_m2"].between(low, high)
         df = df[mask_area]
+        
+        # Remove outliers for "rooms" (keep 1-10 rooms)
+        mask_rooms = df["rooms"].between(1, 10)
+        df = df[mask_rooms]
 
         # Split "lat-lon" column if it exists
         if "lat-lon" in df.columns:
@@ -139,10 +150,10 @@ def wrangle(filepath):
             df["neighborhood"] = df["place_with_parent_names"].str.split("|", expand=True)[3]
             df.drop(columns="place_with_parent_names", inplace=True)
 
-        # Drop columns that might not exist
+        # Drop columns that might not exist (but keep 'rooms')
         columns_to_drop = ['expenses', 'floor', 'operation', 'currency', 'properati_url',
                           'price', 'price_aprox_local_currency', 'price_per_m2', 'price_usd_per_m2',
-                          'surface_total_in_m2', 'rooms']
+                          'surface_total_in_m2']  # Removed 'rooms' from this list
         existing_columns_to_drop = [col for col in columns_to_drop if col in df.columns]
         df.drop(columns=existing_columns_to_drop, inplace=True)
         
@@ -191,7 +202,7 @@ def load_data():
 # =============================================================================
 @st.cache_resource
 def build_model(df):
-    features = ['surface_covered_in_m2', 'lat', 'lon', 'neighborhood']
+    features = ['surface_covered_in_m2', 'rooms', 'lat', 'lon', 'neighborhood']  # Added 'rooms'
     target = 'price_aprox_usd'
     
     X_train = df[features]
@@ -209,9 +220,10 @@ def build_model(df):
 # =============================================================================
 # PREDICTION FUNCTION
 # =============================================================================
-def make_prediction(model, area, lat, lon, neighborhood):
+def make_prediction(model, area, rooms, lat, lon, neighborhood):
     data = {
         'surface_covered_in_m2': area,
+        'rooms': rooms,
         'lat': lat,
         'lon': lon,
         'neighborhood': neighborhood
@@ -240,6 +252,21 @@ def create_area_vs_price_scatter(df):
                     color_discrete_sequence=['#00cc96'])
     return fig
 
+def create_rooms_vs_price_chart(df):
+    fig = px.box(df, x='rooms', y='price_aprox_usd',
+                title='🚪 Price Distribution by Number of Rooms',
+                labels={'rooms': 'Number of Rooms', 'price_aprox_usd': 'Price (USD)'})
+    return fig
+
+def create_rooms_distribution(df):
+    room_counts = df['rooms'].value_counts().sort_index()
+    fig = px.bar(x=room_counts.index, y=room_counts.values,
+                title='📊 Distribution of Apartments by Number of Rooms',
+                labels={'x': 'Number of Rooms', 'y': 'Number of Apartments'},
+                color=room_counts.values,
+                color_continuous_scale='blues')
+    return fig
+
 def create_neighborhood_price_chart(df):
     top_20 = df.groupby('neighborhood')['price_aprox_usd'].mean().sort_values(ascending=False).head(20)
     fig = px.bar(x=top_20.index, y=top_20.values,
@@ -266,7 +293,7 @@ def create_geo_map(df):
                            lon='lon',
                            color='price_aprox_usd',
                            size='surface_covered_in_m2',
-                           hover_data=['neighborhood', 'surface_covered_in_m2'],
+                           hover_data=['neighborhood', 'surface_covered_in_m2', 'rooms'],
                            color_continuous_scale='viridis',
                            zoom=10,
                            title='🗺️ Apartment Prices Across Buenos Aires')
@@ -299,6 +326,7 @@ def main():
     st.sidebar.metric("Total Apartments", f"{len(df):,}")
     st.sidebar.metric("Neighborhoods", df['neighborhood'].nunique())
     st.sidebar.metric("Average Price", f"${df['price_aprox_usd'].mean():,.0f}")
+    st.sidebar.metric("Avg Rooms", f"{df['rooms'].mean():.1f}")
     
     # File uploader for custom data
     st.sidebar.markdown("---")
@@ -333,10 +361,10 @@ def show_data_overview(df):
     with col2:
         st.metric("Average Area", f"{df['surface_covered_in_m2'].mean():.1f} m²")
     with col3:
-        st.metric("Min Price", f"${df['price_aprox_usd'].min():,.0f}")
+        st.metric("Average Rooms", f"{df['rooms'].mean():.1f}")
     with col4:
-        st.metric("Max Price", f"${df['price_aprox_usd'].max():,.0f}")
-    
+        st.metric("Max Rooms", f"{df['rooms'].max()}")
+
     # Data preview
     st.subheader("📋 Data Sample")
     st.dataframe(df.head(10), use_container_width=True)
@@ -347,6 +375,12 @@ def show_data_overview(df):
         st.plotly_chart(create_price_distribution(df), use_container_width=True)
     with col2:
         st.plotly_chart(create_area_vs_price_scatter(df), use_container_width=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.plotly_chart(create_rooms_vs_price_chart(df), use_container_width=True)
+    with col2:
+        st.plotly_chart(create_rooms_distribution(df), use_container_width=True)
     
     # Geographical map
     st.subheader("🗺️ Geographical Distribution")
@@ -378,10 +412,9 @@ def show_neighborhood_analysis(df):
         with col2:
             st.metric("Average Area", f"{neighborhood_data['surface_covered_in_m2'].mean():.1f} m²")
         with col3:
-            st.metric("Number of Listings", len(neighborhood_data))
+            st.metric("Average Rooms", f"{neighborhood_data['rooms'].mean():.1f}")
         with col4:
-            price_per_m2 = neighborhood_data['price_aprox_usd'].mean() / neighborhood_data['surface_covered_in_m2'].mean()
-            st.metric("Price per m²", f"${price_per_m2:,.0f}")
+            st.metric("Listings", len(neighborhood_data))
 
 # =============================================================================
 # PRICE PREDICTION SECTION
@@ -392,6 +425,7 @@ def show_price_prediction(df, model):
     st.info("""
     **Predict apartment prices in Buenos Aires based on:**
     - Surface area
+    - Number of rooms
     - Location coordinates
     - Neighborhood
     """)
@@ -405,6 +439,13 @@ def show_price_prediction(df, model):
                         max_value=120.0, 
                         value=60.0, 
                         step=1.0)
+        
+        rooms = st.slider("🚪 Number of Rooms", 
+                         min_value=1, 
+                         max_value=10, 
+                         value=2, 
+                         step=1,
+                         help="Select the number of bedrooms")
         
         neighborhoods = sorted(df['neighborhood'].unique())
         neighborhood = st.selectbox("🏙️ Neighborhood", neighborhoods)
@@ -426,10 +467,23 @@ def show_price_prediction(df, model):
                              value=float(avg_lon), 
                              format="%.6f")
     
+    # Display current selection summary
+    st.subheader("📋 Selection Summary")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Surface Area", f"{area} m²")
+    with col2:
+        st.metric("Rooms", rooms)
+    with col3:
+        st.metric("Neighborhood", neighborhood)
+    with col4:
+        price_per_m2_est = df[df['neighborhood'] == neighborhood]['price_aprox_usd'].mean() / df[df['neighborhood'] == neighborhood]['surface_covered_in_m2'].mean()
+        st.metric("Est. Price/m²", f"${price_per_m2_est:,.0f}")
+    
     # Prediction button
     if st.button("🎯 Predict Price", type="primary", use_container_width=True):
         with st.spinner('Calculating prediction...'):
-            prediction = make_prediction(model, area, lat, lon, neighborhood)
+            prediction = make_prediction(model, area, rooms, lat, lon, neighborhood)
             
             # Display prediction
             st.markdown(f"""
@@ -439,16 +493,19 @@ def show_price_prediction(df, model):
             """, unsafe_allow_html=True)
             
             # Additional insights
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 price_per_m2 = prediction / area
                 st.metric("Price per m²", f"${price_per_m2:,.0f}")
             with col2:
+                price_per_room = prediction / rooms
+                st.metric("Price per Room", f"${price_per_room:,.0f}")
+            with col3:
                 neighborhood_avg = df[df['neighborhood'] == neighborhood]['price_aprox_usd'].mean()
                 diff = prediction - neighborhood_avg
                 st.metric("vs Neighborhood Avg", f"${diff:,.0f}")
-            with col3:
-                st.metric("Surface Area", f"{area} m²")
+            with col4:
+                st.metric("Rooms", rooms)
 
 # =============================================================================
 # RUN APPLICATION
