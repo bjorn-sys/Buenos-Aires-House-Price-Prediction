@@ -9,14 +9,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.linear_model import LinearRegression
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import make_pipeline
 import warnings
-from glob import glob
+import os
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
@@ -66,55 +65,126 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================================
+# SAMPLE DATA GENERATION (for demo when real data isn't available)
+# =============================================================================
+def generate_sample_data():
+    """Generate realistic sample data for demonstration"""
+    np.random.seed(42)
+    n_samples = 2000
+    
+    # Neighborhoods in Buenos Aires
+    neighborhoods = [
+        'Palermo', 'Recoleta', 'Belgrano', 'Puerto Madero', 'Caballito',
+        'Almagro', 'Flores', 'Constitución', 'Balvanera', 'San Telmo',
+        'Villa Crespo', 'Chacarita', 'Colegiales', 'Nuñez', 'Saavedra'
+    ]
+    
+    # Generate sample data
+    data = {
+        'property_type': ['apartment'] * n_samples,
+        'price_aprox_usd': np.random.normal(150000, 50000, n_samples).clip(50000, 400000),
+        'surface_covered_in_m2': np.random.normal(60, 20, n_samples).clip(30, 120),
+        'lat': np.random.normal(-34.60, 0.05, n_samples),
+        'lon': np.random.normal(-58.45, 0.05, n_samples),
+        'neighborhood': np.random.choice(neighborhoods, n_samples)
+    }
+    
+    df = pd.DataFrame(data)
+    
+    # Adjust prices based on neighborhood (make it realistic)
+    price_multipliers = {
+        'Puerto Madero': 2.0, 'Recoleta': 1.8, 'Palermo': 1.6, 'Belgrano': 1.4,
+        'Nuñez': 1.3, 'Colegiales': 1.3, 'Villa Crespo': 1.2, 'Caballito': 1.1,
+        'Almagro': 1.0, 'Chacarita': 0.9, 'Balvanera': 0.9, 'San Telmo': 0.9,
+        'Constitución': 0.8, 'Flores': 0.8, 'Saavedra': 0.8
+    }
+    
+    for neighborhood, multiplier in price_multipliers.items():
+        mask = df['neighborhood'] == neighborhood
+        df.loc[mask, 'price_aprox_usd'] = df.loc[mask, 'price_aprox_usd'] * multiplier
+    
+    # Adjust prices based on surface area
+    df['price_aprox_usd'] = df['price_aprox_usd'] * (df['surface_covered_in_m2'] / 60)
+    
+    return df
+
+# =============================================================================
 # DATA WRANGLING FUNCTION
 # =============================================================================
 def wrangle(filepath):
-    # Read CSV file
-    df = pd.read_csv(filepath)
-    
-    # Subset data: Apartments in "Capital Federal", less than 400,000
-    mask_ba = df["place_with_parent_names"].str.contains("Capital Federal")
-    mask_apt = df["property_type"] == "apartment"
-    mask_price = df["price_aprox_usd"] < 400_000
-    
-    df = df[mask_ba & mask_apt & mask_price]
+    """Wrangle data from CSV file - with error handling for missing files"""
+    try:
+        # Read CSV file
+        df = pd.read_csv(filepath)
+        
+        # Subset data: Apartments in "Capital Federal", less than 400,000
+        mask_ba = df["place_with_parent_names"].str.contains("Capital Federal", na=False)
+        mask_apt = df["property_type"] == "apartment"
+        mask_price = df["price_aprox_usd"] < 400_000
+        
+        df = df[mask_ba & mask_apt & mask_price]
 
-    # Subset data: Remove outliers for "surface_covered_in_m2"
-    low, high = df["surface_covered_in_m2"].quantile([0.1, 0.9])
-    mask_area = df["surface_covered_in_m2"].between(low, high)
-    df = df[mask_area]
+        # Subset data: Remove outliers for "surface_covered_in_m2"
+        low, high = df["surface_covered_in_m2"].quantile([0.1, 0.9])
+        mask_area = df["surface_covered_in_m2"].between(low, high)
+        df = df[mask_area]
 
-    # Split "lat-lon" column
-    df[["lat", "lon"]] = df["lat-lon"].str.split(",", expand=True).astype(float)
-    df.drop(columns="lat-lon", inplace=True)
+        # Split "lat-lon" column if it exists
+        if "lat-lon" in df.columns:
+            df[["lat", "lon"]] = df["lat-lon"].str.split(",", expand=True).astype(float)
+            df.drop(columns="lat-lon", inplace=True)
 
-    # Get neighborhood name
-    df["neighborhood"] = df["place_with_parent_names"].str.split("|", expand=True)[3]
-    df.drop(columns="place_with_parent_names", inplace=True)
+        # Get neighborhood name
+        if "place_with_parent_names" in df.columns:
+            df["neighborhood"] = df["place_with_parent_names"].str.split("|", expand=True)[3]
+            df.drop(columns="place_with_parent_names", inplace=True)
 
-    # Drop columns with more than 50% NaN values
-    df.drop(columns=['expenses', 'floor','operation', 'currency', 'properati_url'], inplace=True)
-    
-    # Drop leaky columns
-    df.drop(columns=['price','price_aprox_local_currency','price_per_m2','price_usd_per_m2'], inplace=True)
-    
-    # Drop columns with multicollinearity
-    df.drop(columns=['surface_total_in_m2', 'rooms'], inplace=True)
-    
-    return df
+        # Drop columns that might not exist
+        columns_to_drop = ['expenses', 'floor', 'operation', 'currency', 'properati_url',
+                          'price', 'price_aprox_local_currency', 'price_per_m2', 'price_usd_per_m2',
+                          'surface_total_in_m2', 'rooms']
+        existing_columns_to_drop = [col for col in columns_to_drop if col in df.columns]
+        df.drop(columns=existing_columns_to_drop, inplace=True)
+        
+        return df
+    except Exception as e:
+        st.warning(f"Could not load data from {filepath}: {e}")
+        return pd.DataFrame()  # Return empty DataFrame
 
 # =============================================================================
 # LOAD AND PREPARE DATA
 # =============================================================================
 @st.cache_data
 def load_data():
-    files = glob(r'C:\Users\USER\Desktop\PROJECTS\buenos-aires-real-estate-*.csv')
-    frames = []
-    for file in files:
-        df = wrangle(file)
-        frames.append(df)
-    df = pd.concat(frames, ignore_index=True)
-    return df
+    """Load data with fallback to sample data"""
+    try:
+        # Try to load from CSV files
+        import glob
+        files = glob.glob('*.csv')  # Look for CSV files in current directory
+        
+        if not files:
+            # If no CSV files found, try the original path (might work locally)
+            files = glob.glob(r'C:\Users\USER\Desktop\PROJECTS\buenos-aires-real-estate-*.csv')
+        
+        frames = []
+        for file in files:
+            df = wrangle(file)
+            if not df.empty:
+                frames.append(df)
+        
+        if frames:
+            df = pd.concat(frames, ignore_index=True)
+            st.success(f"✅ Loaded {len(df)} real estate listings from {len(files)} files")
+            return df
+        else:
+            # If no data loaded, generate sample data
+            st.info("📊 Using sample data for demonstration. Upload your own CSV files for real analysis.")
+            return generate_sample_data()
+            
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        st.info("📊 Generating sample data for demonstration...")
+        return generate_sample_data()
 
 # =============================================================================
 # BUILD MODEL
@@ -128,8 +198,8 @@ def build_model(df):
     y_train = df[target]
     
     model = make_pipeline(
-        OneHotEncoder(),
-        SimpleImputer(),
+        OneHotEncoder(handle_unknown='ignore'),
+        SimpleImputer(strategy='mean'),
         LinearRegression()
     )
     model.fit(X_train, y_train)
@@ -204,33 +274,6 @@ def create_geo_map(df):
     fig.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
     return fig
 
-def create_model_performance(model, X_train, y_train):
-    y_pred = model.predict(X_train)
-    mae = mean_absolute_error(y_train, y_pred)
-    mse = mean_squared_error(y_train, y_pred)
-    r2 = r2_score(y_train, y_pred)
-    
-    # Create performance metrics
-    metrics_df = pd.DataFrame({
-        'Metric': ['Mean Absolute Error', 'Mean Squared Error', 'R² Score'],
-        'Value': [f'${mae:,.2f}', f'${mse:,.0f}', f'{r2:.4f}']
-    })
-    
-    # Create prediction vs actual plot
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=y_train, y=y_pred, mode='markers', 
-                            name='Predictions', marker=dict(color='#636efa')))
-    fig.add_trace(go.Scatter(x=[y_train.min(), y_train.max()], 
-                            y=[y_train.min(), y_train.max()], 
-                            mode='lines', 
-                            name='Perfect Prediction', 
-                            line=dict(color='red', dash='dash')))
-    fig.update_layout(title='📈 Model Performance: Actual vs Predicted Prices',
-                     xaxis_title='Actual Price (USD)',
-                     yaxis_title='Predicted Price (USD)')
-    
-    return metrics_df, fig
-
 # =============================================================================
 # MAIN APPLICATION
 # =============================================================================
@@ -248,8 +291,7 @@ def main():
     app_section = st.sidebar.radio("Go to", 
                                   ["📊 Data Overview", 
                                    "🏙️ Neighborhood Analysis", 
-                                   "🤖 Price Prediction",
-                                   "📈 Model Performance"])
+                                   "🤖 Price Prediction"])
     
     # Display dataset info in sidebar
     st.sidebar.markdown("---")
@@ -258,6 +300,18 @@ def main():
     st.sidebar.metric("Neighborhoods", df['neighborhood'].nunique())
     st.sidebar.metric("Average Price", f"${df['price_aprox_usd'].mean():,.0f}")
     
+    # File uploader for custom data
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📤 Upload Your Data")
+    uploaded_file = st.sidebar.file_uploader("Upload CSV file", type=['csv'])
+    if uploaded_file is not None:
+        try:
+            custom_df = pd.read_csv(uploaded_file)
+            st.sidebar.success(f"Uploaded {len(custom_df)} rows")
+            # Here you could add logic to process the uploaded file
+        except Exception as e:
+            st.sidebar.error(f"Error reading file: {e}")
+    
     # Main content based on selection
     if app_section == "📊 Data Overview":
         show_data_overview(df)
@@ -265,8 +319,6 @@ def main():
         show_neighborhood_analysis(df)
     elif app_section == "🤖 Price Prediction":
         show_price_prediction(df, model)
-    elif app_section == "📈 Model Performance":
-        show_model_performance(model, X_train, y_train)
 
 # =============================================================================
 # DATA OVERVIEW SECTION
@@ -288,10 +340,6 @@ def show_data_overview(df):
     # Data preview
     st.subheader("📋 Data Sample")
     st.dataframe(df.head(10), use_container_width=True)
-    
-    # Statistical summary
-    st.subheader("📈 Statistical Summary")
-    st.dataframe(df.describe(), use_container_width=True)
     
     # Visualizations
     col1, col2 = st.columns(2)
@@ -332,18 +380,8 @@ def show_neighborhood_analysis(df):
         with col3:
             st.metric("Number of Listings", len(neighborhood_data))
         with col4:
-            st.metric("Price per m²", f"${neighborhood_data['price_aprox_usd'].mean() / neighborhood_data['surface_covered_in_m2'].mean():.0f}")
-        
-        # Neighborhood-specific visualizations
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = px.histogram(neighborhood_data, x='price_aprox_usd',
-                              title=f'Price Distribution in {selected_neighborhood}')
-            st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            fig = px.scatter(neighborhood_data, x='surface_covered_in_m2', y='price_aprox_usd',
-                            title=f'Price vs Area in {selected_neighborhood}')
-            st.plotly_chart(fig, use_container_width=True)
+            price_per_m2 = neighborhood_data['price_aprox_usd'].mean() / neighborhood_data['surface_covered_in_m2'].mean()
+            st.metric("Price per m²", f"${price_per_m2:,.0f}")
 
 # =============================================================================
 # PRICE PREDICTION SECTION
@@ -364,8 +402,8 @@ def show_price_prediction(df, model):
     with col1:
         area = st.slider("🏠 Surface Area (m²)", 
                         min_value=30.0, 
-                        max_value=100.0, 
-                        value=50.0, 
+                        max_value=120.0, 
+                        value=60.0, 
                         step=1.0)
         
         neighborhoods = sorted(df['neighborhood'].unique())
@@ -411,76 +449,6 @@ def show_price_prediction(df, model):
                 st.metric("vs Neighborhood Avg", f"${diff:,.0f}")
             with col3:
                 st.metric("Surface Area", f"{area} m²")
-    
-    # Sample predictions
-    st.subheader("💡 Sample Predictions")
-    sample_data = [
-        {"Area": 40, "Neighborhood": "Palermo", "Price": "~$110,000"},
-        {"Area": 60, "Neighborhood": "Recoleta", "Price": "~$150,000"},
-        {"Area": 80, "Neighborhood": "Puerto Madero", "Price": "~$280,000"},
-        {"Area": 50, "Neighborhood": "Belgrano", "Price": "~$120,000"}
-    ]
-    st.table(pd.DataFrame(sample_data))
-
-# =============================================================================
-# MODEL PERFORMANCE SECTION
-# =============================================================================
-def show_model_performance(model, X_train, y_train):
-    st.header("📈 Model Performance")
-    
-    metrics_df, performance_fig = create_model_performance(model, X_train, y_train)
-    
-    # Display metrics
-    st.subheader("📊 Model Metrics")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Mean Absolute Error", f"${mean_absolute_error(y_train, model.predict(X_train)):,.2f}")
-    with col2:
-        st.metric("R² Score", f"{r2_score(y_train, model.predict(X_train)):.4f}")
-    with col3:
-        baseline_mae = mean_absolute_error(y_train, [y_train.mean()] * len(y_train))
-        model_mae = mean_absolute_error(y_train, model.predict(X_train))
-        improvement = ((baseline_mae - model_mae) / baseline_mae) * 100
-        st.metric("Improvement vs Baseline", f"{improvement:.1f}%")
-    
-    # Performance visualization
-    st.plotly_chart(performance_fig, use_container_width=True)
-    
-    # Model details
-    st.subheader("🔧 Model Details")
-    st.write("""
-    **Model Pipeline:**
-    1. **One-Hot Encoding** for categorical features (neighborhood)
-    2. **Simple Imputer** for handling missing values
-    3. **Linear Regression** for price prediction
-    
-    **Features Used:**
-    - Surface Area (m²)
-    - Latitude
-    - Longitude  
-    - Neighborhood
-    """)
-    
-    # Feature importance (simulated for linear regression)
-    st.subheader("🎯 Feature Importance")
-    try:
-        coefficients = model.named_steps['linearregression'].coef_
-        feature_names = ['Surface Area', 'Latitude', 'Longitude'] + \
-                       list(model.named_steps['onehotencoder'].get_feature_names_out(['neighborhood']))
-        
-        # Create feature importance plot
-        importance_df = pd.DataFrame({
-            'Feature': feature_names,
-            'Coefficient': coefficients
-        }).head(20)  # Show top 20
-        
-        fig = px.bar(importance_df, x='Coefficient', y='Feature', 
-                    title='Feature Coefficients (Top 20)',
-                    orientation='h')
-        st.plotly_chart(fig, use_container_width=True)
-    except:
-        st.info("Feature importance details available after model training")
 
 # =============================================================================
 # RUN APPLICATION
