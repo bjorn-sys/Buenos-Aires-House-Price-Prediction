@@ -1,23 +1,38 @@
+# 🏙️ Buenos Aires Apartment Price Predictor – Streamlit App
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pickle
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
 import plotly.express as px
 import plotly.graph_objects as go
+import pickle
+from glob import glob
+import warnings
+
+# Machine Learning libraries
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.svm import SVR
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.impute import SimpleImputer
+
+warnings.simplefilter(action="ignore", category=FutureWarning)
 
 # Set page configuration
 st.set_page_config(
-    page_title="Buenos Aires Real Estate Predictor",
-    page_icon="🏠",
+    page_title="Buenos Aires Apartment Price Predictor",
+    page_icon="🏙️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS for styling
 st.markdown("""
 <style>
     .main-header {
@@ -28,453 +43,493 @@ st.markdown("""
     }
     .metric-card {
         background-color: #f0f2f6;
-        padding: 1rem;
+        padding: 1.5rem;
         border-radius: 10px;
-        margin: 0.5rem 0;
+        border-left: 5px solid #1f77b4;
     }
-    .prediction-box {
-        background-color: #d4edda;
+    .prediction-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
         padding: 2rem;
-        border-radius: 10px;
+        border-radius: 15px;
         text-align: center;
-        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-class RealEstatePredictor:
-    def __init__(self):
-        self.scaler = None
-        self.model = None
-        self.neighborhoods = None
-        self.expected_features = None
-        self.load_models()
-    
-    def load_models(self):
-        try:
-            with open('scaler.pkl', 'rb') as f:
-                self.scaler = pickle.load(f)
-            with open('rf_model.pkl', 'rb') as f:
-                self.model = pickle.load(f)
-            
-            # Get the actual feature names from the scaler
-            if hasattr(self.scaler, 'feature_names_in_'):
-                self.expected_features = list(self.scaler.feature_names_in_)
-                st.success(f"Loaded scaler with {len(self.expected_features)} features")
-            else:
-                # Fallback: use the neighborhoods from your original data
-                self.expected_features = self._get_fallback_features()
-            
-            # Extract neighborhood names from feature names
-            self.neighborhoods = self._extract_neighborhoods()
-            
-        except FileNotFoundError:
-            st.error("Model files not found. Please ensure 'scaler.pkl' and 'best_model.pkl' are in the same directory.")
-    
-    def _get_fallback_features(self):
-        """Fallback feature list based on your original data"""
-        base_features = ['surface_covered_in_m2', 'rooms', 'lat', 'lon']
-        neighborhood_features = [f'neighborhood_{n}' for n in self._get_all_neighborhoods()]
-        return base_features + neighborhood_features
-    
-    def _get_all_neighborhoods(self):
-        """Get all neighborhoods including the empty one"""
-        neighborhoods = [
-            'Caballito', 'Constitución', 'Once', 'Almagro', 'Palermo', 'Flores', 'Belgrano',
-            'Liniers', 'Villa Crespo', 'San Cristobal', 'Congreso', 'Saavedra', 'Balvanera',
-            'Parque Avellaneda', 'San Telmo', 'Nuñez', 'Recoleta', 'Barrio Norte', 'Abasto',
-            'Centro / Microcentro', 'Paternal', 'Chacarita', 'Mataderos', '', 'Coghlan', 'Las Cañitas',
-            'Villa Urquiza', 'Monserrat', 'Villa Pueyrredón', 'San Nicolás', 'Villa del Parque',
-            'Villa Luro', 'Parque Chacabuco', 'Boedo', 'Parque Centenario', 'Parque Chas',
-            'Colegiales', 'Villa Ortuzar', 'Villa Devoto', 'Villa Lugano', 'Floresta', 'Barracas',
-            'Retiro', 'Versalles', 'Boca', 'Puerto Madero', 'Agronomía', 'Monte Castro',
-            'Tribunales', 'Parque Patricios', 'Velez Sarsfield', 'Villa General Mitre',
-            'Villa Santa Rita', 'Villa Soldati', 'Villa Real', 'Pompeya'
-        ]
-        return neighborhoods
-    
-    def _extract_neighborhoods(self):
-        """Extract neighborhood names from feature names"""
-        neighborhoods = []
-        for feature in self.expected_features:
-            if feature.startswith('neighborhood_'):
-                neighborhood_name = feature.replace('neighborhood_', '')
-                neighborhoods.append(neighborhood_name)
-        
-        # Filter out empty string and sort
-        neighborhoods = [n for n in neighborhoods if n]  # Remove empty strings
-        return sorted(neighborhoods)
-    
-    def preprocess_input(self, surface_area, rooms, lat, lon, neighborhood):
-        """Preprocess user input for prediction"""
-        # Create a DataFrame with zeros for all expected features
-        input_data = pd.DataFrame(np.zeros((1, len(self.expected_features))), 
-                                columns=self.expected_features)
-        
-        # Set the basic features
-        input_data['surface_covered_in_m2'] = surface_area
-        input_data['rooms'] = rooms
-        input_data['lat'] = lat
-        input_data['lon'] = lon
-        
-        # Set the neighborhood (one-hot encoded)
-        neighborhood_col = f'neighborhood_{neighborhood}'
-        if neighborhood_col in input_data.columns:
-            input_data[neighborhood_col] = 1
-        else:
-            st.warning(f"Neighborhood '{neighborhood}' not found in trained features. Using default encoding.")
-        
-        return input_data
-    
-    def predict_price(self, input_features):
-        """Make prediction using the trained model"""
-        if self.model and self.scaler:
-            try:
-                # Debug: show feature alignment
-                st.write(f"🔍 Input features: {len(input_features.columns)}")
-                st.write(f"🔍 Expected features: {len(self.expected_features)}")
-                
-                # Ensure the input features match exactly what the scaler expects
-                missing_features = set(self.expected_features) - set(input_features.columns)
-                if missing_features:
-                    st.error(f"Missing features: {missing_features}")
-                    return None
-                
-                # Reorder columns to match scaler expectation
-                input_features = input_features[self.expected_features]
-                
-                # Scale the features
-                scaled_features = self.scaler.transform(input_features)
-                
-                # Make prediction
-                prediction = self.model.predict(scaled_features)[0]
-                return max(0, prediction)  # Ensure non-negative price
-            except Exception as e:
-                st.error(f"Prediction error: {str(e)}")
-                return None
-        return None
+# --------------------------------------------------------------
+# WRANGLE FUNCTION
+# --------------------------------------------------------------
 
-def main():
-    # Initialize predictor
-    predictor = RealEstatePredictor()
+def wrangle(filepath):
+    # Read CSV file
+    if hasattr(filepath, 'read'):
+        df = pd.read_csv(filepath)
+    else:
+        df = pd.read_csv(filepath)
     
-    # Header
-    st.markdown('<h1 class="main-header">🏠 Buenos Aires Real Estate Price Predictor</h1>', unsafe_allow_html=True)
+    # Subset data: Apartments in "Capital Federal", less than 400,000
+    mask_ba = df["place_with_parent_names"].str.contains("Capital Federal", na=False)
+    mask_apt = df["property_type"] == "apartment"
+    mask_price = df["price_aprox_usd"] < 400_000
     
-    # Sidebar for navigation
-    st.sidebar.title("Navigation")
-    app_mode = st.sidebar.selectbox("Choose App Mode", 
-                                   ["📊 Data Overview", "🔮 Price Prediction", "📈 Model Performance"])
-    
-    if app_mode == "📊 Data Overview":
-        show_data_overview(predictor)
-    elif app_mode == "🔮 Price Prediction":
-        show_price_prediction(predictor)
-    elif app_mode == "📈 Model Performance":
-        show_model_performance()
+    df = df[mask_ba & mask_apt & mask_price]
 
-def show_data_overview(predictor):
-    st.header("📊 Dataset Overview")
+    # Subset data: Remove outliers for "surface_covered_in_m2"
+    low, high = df["surface_covered_in_m2"].quantile([0.1, 0.9])
+    mask_area = df["surface_covered_in_m2"].between(low, high)
+    df = df[mask_area]
+
+    # Split "lat-lon" column
+    df[["lat", "lon"]] = df["lat-lon"].str.split(",", expand=True).astype(float)
+    df.drop(columns="lat-lon", inplace=True)
+
+    # Get place name
+    df["neighborhood"] = df["place_with_parent_names"].str.split("|", expand=True)[3]
+    df.drop(columns="place_with_parent_names", inplace=True)
+ 
+    # dropping columns with more than 50% NAN files
+    df.drop(columns=['expenses', 'floor','operation', 'currency', 'properati_url'], inplace=True)
     
-    col1, col2 = st.columns([2, 1])
+    # drop leaky columns
+    df.drop(columns=['price','price_aprox_local_currency','price_per_m2','price_usd_per_m2'], inplace=True)
+    
+    # drop columns with multy collinearity
+    df.drop(columns=['surface_total_in_m2'], inplace=True)
+    
+    return df
+
+# --------------------------------------------------------------
+# SIDEBAR - DATA UPLOAD
+# --------------------------------------------------------------
+
+st.sidebar.title("📁 Data Configuration")
+
+# File upload option
+use_sample_data = st.sidebar.checkbox("Use sample data from local directory", value=True)
+
+if use_sample_data:
+    files = glob('buenos-aires-real-estate-*.csv')
+    if not files:
+        files = glob('*.csv')
+    if files:
+        st.sidebar.success(f"Found {len(files)} CSV file(s)")
+    else:
+        st.sidebar.warning("No CSV files found in directory")
+        files = []
+else:
+    uploaded_files = st.sidebar.file_uploader(
+        "Upload CSV files", 
+        type=["csv"], 
+        accept_multiple_files=True,
+        help="Upload Buenos Aires real estate CSV files"
+    )
+    files = uploaded_files if uploaded_files else []
+
+# --------------------------------------------------------------
+# MAIN APP
+# --------------------------------------------------------------
+
+# Header
+st.markdown('<h1 class="main-header">🏙️ Buenos Aires Apartment Price Predictor</h1>', unsafe_allow_html=True)
+st.markdown("---")
+
+# Data Processing Section
+if not files:
+    st.info("👆 Please upload CSV files or use sample data from the sidebar to get started.")
+    st.stop()
+
+# Process data
+with st.spinner("🔄 Processing and cleaning data..."):
+    try:
+        frames = []
+        for file in files:
+            df_temp = wrangle(file)
+            frames.append(df_temp)
+        
+        if not frames:
+            st.error("❌ No valid data found after processing. Please check your files.")
+            st.stop()
+            
+        df = pd.concat(frames, ignore_index=True)
+        
+        # Clean data
+        initial_shape = df.shape
+        df.dropna(inplace=True)
+        df.drop_duplicates(inplace=True)
+        final_shape = df.shape
+        
+        st.session_state.df = df
+        st.session_state.data_loaded = True
+        
+    except Exception as e:
+        st.error(f"❌ Error processing data: {str(e)}")
+        st.stop()
+
+# Display data overview
+if st.session_state.data_loaded:
+    df = st.session_state.df
+    
+    # Data Overview Cards
+    st.subheader("📊 Dataset Overview")
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
-        st.subheader("Key Statistics")
-        stats_data = {
-            'Metric': ['Total Apartments', 'Average Price (USD)', 'Average Surface Area (m²)', 
-                      'Average Rooms', 'Number of Neighborhoods'],
-            'Value': ['4,876', '$132,384', '53.66 m²', '2.31', '56']
-        }
-        stats_df = pd.DataFrame(stats_data)
-        st.dataframe(stats_df, use_container_width=True)
-        
-        # Show available neighborhoods
-        if predictor.neighborhoods:
-            st.subheader("Available Neighborhoods")
-            st.write(f"Total: {len(predictor.neighborhoods)} neighborhoods")
-            neighborhoods_text = ", ".join(predictor.neighborhoods[:10]) + "..." if len(predictor.neighborhoods) > 10 else ", ".join(predictor.neighborhoods)
-            st.write(neighborhoods_text)
-    
+        st.metric("Total Apartments", f"{len(df):,}")
     with col2:
-        st.subheader("Price Distribution")
-        # Simulate price distribution based on your actual data statistics
-        np.random.seed(42)
-        prices = np.random.normal(132384, 58744, 1000)
-        prices = prices[(prices > 0) & (prices < 400000)]
-        
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.hist(prices, bins=30, alpha=0.7, color='skyblue', edgecolor='black')
-        ax.set_xlabel('Price (USD)')
-        ax.set_ylabel('Frequency')
-        ax.set_title('Price Distribution')
-        st.pyplot(fig)
+        st.metric("Average Price", f"${df['price_aprox_usd'].mean():,.0f}")
+    with col3:
+        st.metric("Average Area", f"{df['surface_covered_in_m2'].mean():.0f} m²")
+    with col4:
+        st.metric("Average Rooms", f"{df['rooms'].mean():.1f}")
+    with col5:
+        st.metric("Neighborhoods", f"{df['neighborhood'].nunique()}")
     
-    # Feature relationships
-    st.subheader("Feature Relationships")
+    st.markdown("---")
     
-    col1, col2 = st.columns(2)
+    # --------------------------------------------------------------
+    # EXPLORATORY DATA ANALYSIS
+    # --------------------------------------------------------------
     
-    with col1:
-        # Surface Area vs Price
-        st.write("**Surface Area vs Price**")
-        fig, ax = plt.subplots(figsize=(10, 6))
-        # Simulate data based on your actual relationships
-        surface_area = np.random.uniform(30, 100, 200)
-        price = surface_area * 2000 + np.random.normal(0, 20000, 200)
-        ax.scatter(surface_area, price, alpha=0.6, color='blue')
-        ax.set_xlabel('Surface Area (m²)')
-        ax.set_ylabel('Price (USD)')
-        ax.set_title('Price vs Surface Area')
-        st.pyplot(fig)
+    st.header("📈 Exploratory Data Analysis")
     
-    with col2:
-        # Neighborhood prices
-        st.write("**Top 10 Neighborhoods by Average Price**")
-        neighborhood_data = {
-            'Neighborhood': ['Puerto Madero', 'Recoleta', 'Palermo', 'Belgrano', 'Barrio Norte',
-                           'Nuñez', 'Las Cañitas', 'Colegiales', 'Villa Urquiza', 'Caballito'],
-            'Average Price (USD)': [280000, 220000, 190000, 175000, 170000, 
-                                  165000, 160000, 155000, 150000, 145000]
-        }
-        neighborhood_df = pd.DataFrame(neighborhood_data)
-        
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.barh(neighborhood_df['Neighborhood'], neighborhood_df['Average Price (USD)'], 
-                color='lightcoral')
-        ax.set_xlabel('Average Price (USD)')
-        ax.set_title('Top 10 Neighborhoods by Average Price')
-        plt.tight_layout()
-        st.pyplot(fig)
-
-def show_price_prediction(predictor):
-    st.header("🔮 Price Prediction")
+    # Tabs for different visualizations
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🏘️ Neighborhood Analysis", 
+        "📊 Price Distribution", 
+        "🗺️ Location Map", 
+        "📐 Area vs Price", 
+        "🔍 Raw Data"
+    ])
     
-    st.write("""
-    Enter the details of the apartment to get a price prediction. 
-    The model predicts prices for apartments in Buenos Aires Capital Federal under $400,000 USD.
-    """)
-    
-    # Check if model is loaded
-    if predictor.model is None or predictor.scaler is None:
-        st.error("❌ Model not loaded properly. Please check if model files are available.")
-        return
-    
-    # Display model info
-    st.info(f"✅ Model loaded: {len(predictor.expected_features)} features, {len(predictor.neighborhoods)} neighborhoods available")
-    
-    # Input form
-    with st.form("prediction_form"):
+    with tab1:
         col1, col2 = st.columns(2)
         
         with col1:
-            surface_area = st.slider(
-                "Surface Covered Area (m²)",
-                min_value=30,
-                max_value=100,
-                value=50,
-                help="Surface area in square meters"
-            )
+            # Top 20 neighborhoods by average price
+            st.subheader("🏆 Top 20 Neighborhoods by Average Price")
+            top_price_neighborhoods = df.groupby('neighborhood')['price_aprox_usd'].mean().sort_values(ascending=False).head(20)
             
-            rooms = st.slider(
-                "Number of Rooms",
-                min_value=1,
-                max_value=6,
-                value=2,
-                help="Number of rooms in the apartment"
+            fig = px.bar(
+                top_price_neighborhoods,
+                orientation='h',
+                color=top_price_neighborhoods.values,
+                color_continuous_scale='viridis',
+                title='Average Price by Neighborhood (Top 20)'
             )
-            
-            # Neighborhood selection
-            if predictor.neighborhoods:
-                neighborhood = st.selectbox(
-                    "Neighborhood",
-                    options=predictor.neighborhoods,
-                    index=predictor.neighborhoods.index('Palermo') if 'Palermo' in predictor.neighborhoods else 0,
-                    help="Select the neighborhood"
-                )
-            else:
-                st.error("No neighborhoods loaded")
-                return
+            fig.update_layout(yaxis_title='Neighborhood', xaxis_title='Average Price (USD)')
+            st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            st.write("**Location Coordinates**")
-            lat = st.number_input(
-                "Latitude",
-                min_value=-34.9,
-                max_value=-34.5,
-                value=-34.58,
-                format="%.6f",
-                help="Latitude coordinate (e.g., -34.58 for central Buenos Aires)"
+            # Top 20 neighborhoods by apartment count
+            st.subheader("🏢 Top 20 Neighborhoods by Apartment Count")
+            top_count_neighborhoods = df['neighborhood'].value_counts().head(20)
+            
+            fig = px.bar(
+                top_count_neighborhoods,
+                orientation='h',
+                color=top_count_neighborhoods.values,
+                color_continuous_scale='plasma',
+                title='Number of Apartments by Neighborhood (Top 20)'
             )
-            
-            lon = st.number_input(
-                "Longitude",
-                min_value=-58.6,
-                max_value=-58.3,
-                value=-58.43,
-                format="%.6f",
-                help="Longitude coordinate (e.g., -58.43 for central Buenos Aires)"
+            fig.update_layout(yaxis_title='Neighborhood', xaxis_title='Number of Apartments')
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with tab2:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("💰 Price Distribution")
+            fig = px.histogram(
+                df, 
+                x='price_aprox_usd',
+                nbins=30,
+                color_discrete_sequence=['#FF4B4B'],
+                title='Distribution of Apartment Prices'
             )
-            
-            # Show coordinate help
-            with st.expander("💡 Coordinate Help"):
-                st.write("""
-                **Typical Buenos Aires Coordinates:**
-                - **Central Areas**: -34.58 to -34.62 latitude, -58.38 to -58.48 longitude
-                - **Palermo**: -34.57 to -34.59
-                - **Recoleta**: -34.58 to -34.59
-                - **Downtown**: -34.60 to -34.61
-                """)
+            fig.update_layout(xaxis_title='Price (USD)', yaxis_title='Count')
+            st.plotly_chart(fig, use_container_width=True)
         
-        # Submit button
-        submitted = st.form_submit_button("Predict Price", use_container_width=True)
+        with col2:
+            st.subheader("🛏️ Rooms Distribution")
+            fig = px.histogram(
+                df,
+                x='rooms',
+                color_discrete_sequence=['#00CC96'],
+                title='Distribution of Number of Rooms'
+            )
+            fig.update_layout(xaxis_title='Number of Rooms', yaxis_title='Count')
+            st.plotly_chart(fig, use_container_width=True)
     
-    # Make prediction when form is submitted
-    if submitted:
-        # Show loading spinner
-        with st.spinner('Making prediction...'):
-            # Preprocess input
-            input_features = predictor.preprocess_input(surface_area, rooms, lat, lon, neighborhood)
-            
-            # Make prediction
-            predicted_price = predictor.predict_price(input_features)
+    with tab3:
+        st.subheader("🗺️ Apartment Locations in Buenos Aires")
+        fig = px.scatter_mapbox(
+            df,
+            lat='lat',
+            lon='lon',
+            color='price_aprox_usd',
+            size='surface_covered_in_m2',
+            hover_data=['rooms', 'neighborhood'],
+            color_continuous_scale='viridis',
+            zoom=10,
+            height=600,
+            title='Apartment Locations Colored by Price'
+        )
+        fig.update_layout(mapbox_style="open-street-map")
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with tab4:
+        st.subheader("📐 Price vs Surface Area")
+        fig = px.scatter(
+            df,
+            x='surface_covered_in_m2',
+            y='price_aprox_usd',
+            color='rooms',
+            size='rooms',
+            hover_data=['neighborhood'],
+            title='Relationship between Surface Area and Price',
+            color_continuous_scale='viridis'
+        )
+        fig.update_layout(xaxis_title='Surface Area (m²)', yaxis_title='Price (USD)')
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with tab5:
+        st.subheader("🔍 Raw Data Preview")
+        st.dataframe(df, use_container_width=True)
         
-        if predicted_price is not None:
-            # Display prediction
-            st.markdown(f"""
-            <div class="prediction-box">
-                <h2>Predicted Price: ${predicted_price:,.2f} USD</h2>
-                <p>Based on the features provided</p>
-            </div>
-            """, unsafe_allow_html=True)
+        # Download cleaned data
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Cleaned Data",
+            data=csv,
+            file_name="buenos_aires_cleaned_apartments.csv",
+            mime="text/csv"
+        )
+    
+    st.markdown("---")
+    
+    # --------------------------------------------------------------
+    # MODEL TRAINING SECTION
+    # --------------------------------------------------------------
+    
+    st.header("🤖 Machine Learning Models")
+    
+    # Prepare data for modeling
+    with st.spinner("🔄 Preparing data for machine learning..."):
+        # Drop property_type and one-hot encode neighborhood
+        df_model = df.drop(columns=['property_type'], errors='ignore')
+        
+        # One-hot encode neighborhood
+        encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+        encoded_neighborhood = encoder.fit_transform(df_model[['neighborhood']])
+        encoded_cols = encoder.get_feature_names_out(['neighborhood'])
+        
+        df_encoded = pd.concat([
+            df_model.drop('neighborhood', axis=1),
+            pd.DataFrame(encoded_neighborhood, columns=encoded_cols, index=df_model.index)
+        ], axis=1)
+        
+        # Split features and target
+        X = df_encoded.drop(columns=['price_aprox_usd'])
+        y = df_encoded['price_aprox_usd']
+        
+        # Train-test split
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        st.session_state.X_train = X_train
+        st.session_state.X_test = X_test
+        st.session_state.y_train = y_train
+        st.session_state.y_test = y_test
+        st.session_state.X_train_scaled = X_train_scaled
+        st.session_state.X_test_scaled = X_test_scaled
+        st.session_state.encoder = encoder
+        st.session_state.scaler = scaler
+    
+    # Model training
+    if st.button("🚀 Train All Models", type="primary"):
+        with st.spinner("Training multiple machine learning models... This may take a few minutes."):
+            models = {
+                'Linear Regression': LinearRegression(),
+                'Ridge Regression': Ridge(alpha=1.0, solver='auto', random_state=42),
+                'Decision Tree': DecisionTreeRegressor(max_depth=5, min_samples_split=10, min_samples_leaf=5, random_state=42),
+                'Random Forest': RandomForestRegressor(n_estimators=200, max_depth=7, min_samples_split=10,
+                                                    min_samples_leaf=5, random_state=42, n_jobs=-1),
+                'XGBoost': XGBRegressor(n_estimators=200, max_depth=7, learning_rate=0.1, subsample=0.8,
+                                    colsample_bytree=0.8, random_state=42, n_jobs=-1),
+                'KNN Regressor': KNeighborsRegressor(n_neighbors=5, weights='distance', metric='minkowski'),
+                'SVR': SVR(C=100, epsilon=0.1, kernel='rbf', gamma='scale')
+            }
             
-            # Show feature insights
-            st.subheader("📊 Feature Insights")
+            results = []
+            best_model = None
+            best_r2 = -np.inf
             
-            col1, col2, col3 = st.columns(3)
+            progress_bar = st.progress(0)
+            for i, (name, model) in enumerate(models.items()):
+                # Update progress
+                progress = (i + 1) / len(models)
+                progress_bar.progress(progress)
+                
+                # Train model
+                model.fit(st.session_state.X_train_scaled, st.session_state.y_train)
+                y_pred = model.predict(st.session_state.X_test_scaled)
+                
+                # Calculate metrics
+                mae = mean_absolute_error(st.session_state.y_test, y_pred)
+                mse = mean_squared_error(st.session_state.y_test, y_pred)
+                rmse = np.sqrt(mse)
+                r2 = r2_score(st.session_state.y_test, y_pred)
+                
+                results.append({
+                    'Model': name,
+                    'MAE': mae,
+                    'MSE': mse,
+                    'RMSE': rmse,
+                    'R²': r2
+                })
+                
+                # Track best model
+                if r2 > best_r2:
+                    best_r2 = r2
+                    best_model = model
             
-            with col1:
-                st.metric(
-                    "Surface Area",
-                    f"{surface_area} m²",
-                    f"${surface_area * 2000:,.0f} est. impact"
-                )
+            # Display results
+            results_df = pd.DataFrame(results).round(2)
+            results_df = results_df.sort_values('R²', ascending=False)
             
-            with col2:
-                st.metric(
-                    "Rooms",
-                    f"{rooms}",
-                    f"${rooms * 15000:,.0f} est. impact"
-                )
+            st.subheader("📊 Model Performance Comparison")
+            st.dataframe(results_df, use_container_width=True)
             
-            with col3:
-                neighborhood_impact = 50000 if neighborhood in ['Puerto Madero', 'Recoleta', 'Palermo'] else 30000
-                st.metric(
-                    "Neighborhood",
-                    neighborhood,
-                    f"${neighborhood_impact:,.0f} est. impact"
-                )
+            # Highlight best model
+            best_model_name = results_df.iloc[0]['Model']
+            st.success(f"🎯 Best Performing Model: **{best_model_name}** (R²: {results_df.iloc[0]['R²']:.4f})")
             
-            # Price analysis
-            st.subheader("💰 Price Analysis")
+            # Store best model
+            st.session_state.best_model = best_model
+            st.session_state.models_trained = True
+            st.session_state.results_df = results_df
             
-            analysis_col1, analysis_col2, analysis_col3 = st.columns(3)
+            # Save model and scaler
+            with open('scaler.pkl', 'wb') as f:
+                pickle.dump(scaler, f)
+            with open('rf_model.pkl', 'wb') as f:
+                pickle.dump(best_model, f)
             
-            with analysis_col1:
-                st.metric(
-                    "Budget Range",
-                    "$100K - $200K",
-                    f"${predicted_price - 150000:,.0f} from mid-range",
-                    delta_color="off"
-                )
+            st.balloons()
+    
+    # --------------------------------------------------------------
+    # PRICE PREDICTION INTERFACE
+    # --------------------------------------------------------------
+    
+    st.markdown("---")
+    st.header("🔮 Price Prediction")
+    
+    if 'models_trained' in st.session_state and st.session_state.models_trained:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("🏠 Apartment Details")
+            surface_area = st.slider("Surface Area (m²)", 30, 150, 70, help="Total covered area in square meters")
+            rooms = st.selectbox("Number of Rooms", [1, 2, 3, 4, 5, 6], help="Number of rooms in the apartment")
             
-            with analysis_col2:
-                avg_diff = predicted_price - 140000
-                st.metric(
-                    "Market Position",
-                    "Average" if 120000 <= predicted_price <= 160000 else "Above Avg" if predicted_price > 160000 else "Below Avg",
-                    f"${avg_diff:,.0f} from avg"
-                )
+            # Use actual data ranges for location
+            lat_min, lat_max = df['lat'].min(), df['lat'].max()
+            lon_min, lon_max = df['lon'].min(), df['lon'].max()
             
-            with analysis_col3:
-                affordability = "High" if predicted_price < 100000 else "Medium" if predicted_price < 200000 else "Premium"
-                st.metric(
-                    "Affordability",
-                    affordability,
-                    delta=None
-                )
+            latitude = st.slider("Latitude", float(lat_min), float(lat_max), float((lat_min + lat_max) / 2), 0.001,
+                               help="Geographical latitude coordinate")
+            longitude = st.slider("Longitude", float(lon_min), float(lon_max), float((lon_min + lon_max) / 2), 0.001,
+                                help="Geographical longitude coordinate")
+        
+        with col2:
+            st.subheader("📍 Neighborhood")
+            neighborhoods = st.session_state.encoder.categories_[0]
+            neighborhood = st.selectbox("Select Neighborhood", neighborhoods, 
+                                      help="Choose the neighborhood where the apartment is located")
+            
+            if st.button("🎯 Predict Price", type="primary", use_container_width=True):
+                try:
+                    # Create one-hot vector for neighborhood
+                    neigh_vector = np.zeros(len(st.session_state.encoder.get_feature_names_out(['neighborhood'])))
+                    idx = list(st.session_state.encoder.get_feature_names_out(['neighborhood'])).index(f"neighborhood_{neighborhood}")
+                    neigh_vector[idx] = 1
+                    
+                    # Prepare input data
+                    input_data = np.array([[surface_area, rooms, latitude, longitude] + list(neigh_vector)])
+                    input_scaled = st.session_state.scaler.transform(input_data)
+                    
+                    # Make prediction
+                    pred = st.session_state.best_model.predict(input_scaled)[0]
+                    
+                    # Display prediction
+                    st.markdown("---")
+                    st.markdown('<div class="prediction-card">', unsafe_allow_html=True)
+                    st.metric("Predicted Price", f"${pred:,.0f} USD")
+                    st.metric("Price per m²", f"${pred/surface_area:,.0f} USD/m²")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Show confidence interval (using MAE from best model)
+                    best_model_results = st.session_state.results_df[st.session_state.results_df['Model'] == 'XGBoost'].iloc[0]
+                    mae = best_model_results['MAE']
+                    
+                    st.info(f"📊 Expected price range: **${pred-mae:,.0f} - ${pred+mae:,.0f} USD**")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error making prediction: {str(e)}")
+    else:
+        st.info("👆 Please train the models first using the 'Train All Models' button above.")
+    
+    # --------------------------------------------------------------
+    # MODEL INSIGHTS
+    # --------------------------------------------------------------
+    
+    if 'models_trained' in st.session_state and st.session_state.models_trained:
+        st.markdown("---")
+        st.header("🔍 Model Insights")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("📈 Model Performance Comparison")
+            fig = px.bar(
+                st.session_state.results_df,
+                x='Model',
+                y='R²',
+                color='R²',
+                color_continuous_scale='viridis',
+                title='R² Score by Model (Higher is Better)'
+            )
+            fig.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.subheader("📉 Error Metrics Comparison")
+            fig = px.bar(
+                st.session_state.results_df,
+                x='Model',
+                y='MAE',
+                color='MAE',
+                color_continuous_scale='reds',
+                title='Mean Absolute Error by Model (Lower is Better)'
+            )
+            fig.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    # --------------------------------------------------------------
+    # FOOTER
+    # --------------------------------------------------------------
+    
+    st.markdown("---")
+    st.markdown("""
+    <div style='text-align: center; color: gray;'>
+        <p>🏙️ Buenos Aires Apartment Price Predictor | Built with Streamlit</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-def show_model_performance():
-    st.header("📈 Model Performance Analysis")
-    
-    st.write("""
-    This section shows the performance metrics of our trained machine learning models 
-    for predicting real estate prices in Buenos Aires.
-    """)
-    
-    # Model comparison metrics
-    st.subheader("🏆 Model Performance Comparison")
-    
-    performance_data = {
-        'Model': ['Random Forest (Tuned)', 'XGBoost (Tuned)', 'Linear Regression', 
-                 'Decision Tree', 'KNN Regressor', 'SVR (Tuned)'],
-        'MAE (USD)': [20869, 20880, 25849, 26460, 22285, 25887],
-        'MSE': [930363931, 943924785, 1250891040, 1360222781, 1040248078, 1420596922],
-        'R² Score': [0.7476, 0.7439, 0.6606, 0.6309, 0.7178, 0.6146]
-    }
-    
-    perf_df = pd.DataFrame(performance_data)
-    
-    # Display metrics with formatting
-    styled_df = perf_df.style.format({
-        'MAE (USD)': '{:,.0f}',
-        'MSE': '{:,.0f}',
-        'R² Score': '{:.4f}'
-    })
-    
-    st.dataframe(styled_df, use_container_width=True)
-    
-    # Visualization
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**📉 Mean Absolute Error (MAE) Comparison**")
-        fig, ax = plt.subplots(figsize=(10, 6))
-        models = perf_df['Model']
-        mae = perf_df['MAE (USD)']
-        
-        colors = ['#FF6B6B' if 'Random Forest' in model else '#4ECDC4' for model in models]
-        bars = ax.barh(models, mae, color=colors, alpha=0.8)
-        ax.set_xlabel('MAE (USD) - Lower is Better')
-        ax.set_title('Model Comparison: Mean Absolute Error')
-        
-        # Add value labels
-        for bar in bars:
-            width = bar.get_width()
-            ax.text(width + 100, bar.get_y() + bar.get_height()/2, 
-                   f'${width:,.0f}', ha='left', va='center', fontweight='bold')
-        
-        plt.tight_layout()
-        st.pyplot(fig)
-    
-    with col2:
-        st.write("**📈 R² Score Comparison**")
-        fig, ax = plt.subplots(figsize=(10, 6))
-        r2_scores = perf_df['R² Score']
-        
-        colors = ['#FF6B6B' if 'Random Forest' in model else '#4ECDC4' for model in models]
-        bars = ax.barh(models, r2_scores, color=colors, alpha=0.8)
-        ax.set_xlabel('R² Score - Higher is Better')
-        ax.set_title('Model Comparison: R² Score')
-        ax.set_xlim(0, 1)
-        
-        # Add value labels
-        for bar in bars:
-            width = bar.get_width()
-            ax.text(width + 0.01, bar.get_y() + bar.get_height()/2, 
-                   f'{width:.4f}', ha='left', va='center', fontweight='bold')
-        
-        plt.tight_layout()
-        st.pyplot(fig)
-
-if __name__ == "__main__":
-    main()
+else:
+    st.warning("Please load data to continue.")
