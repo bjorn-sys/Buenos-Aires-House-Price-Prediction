@@ -1,5 +1,8 @@
-# Required packages
-pip install streamlit pandas numpy matplotlib seaborn plotly scikit-learn
-
-# Optional for enhanced performance
-pip install xgboost
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+plotly
+scikit-learn
+xgboost
