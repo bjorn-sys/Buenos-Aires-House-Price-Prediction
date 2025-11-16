@@ -54,7 +54,7 @@ class RealEstatePredictor:
         try:
             with open('scaler.pkl', 'rb') as f:
                 self.scaler = pickle.load(f)
-            with open('best_model.pkl', 'rb') as f:
+            with open('rf_model.pkl', 'rb') as f:
                 self.model = pickle.load(f)
             
             # Get the actual feature names from the scaler
